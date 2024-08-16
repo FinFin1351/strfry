@@ -1,5 +1,5 @@
 #include "RelayServer.h"
-
+#include "QueryScheduler.h"
 
 void RelayServer::runIngester(ThreadPool<MsgIngester>::Thread &thr) {
     secp256k1_context *secpCtx = secp256k1_context_create(SECP256K1_CONTEXT_VERIFY);
@@ -58,6 +58,13 @@ void RelayServer::runIngester(ThreadPool<MsgIngester>::Thread &thr) {
                                 ingesterProcessNegentropy(txn, decomp, msg->connId, arr);
                             } catch (std::exception &e) {
                                 sendNoticeError(msg->connId, std::string("negentropy error: ") + e.what());
+                            }
+                        }  else if (cmd == "COUNT") {
+                            if (cfg().relay__logging__dumpInReqs) LI << "[" << msg->connId << "] dumpInCount: " << msg->payload; 
+                            try {
+                                ingesterProcessCount(txn, msg->connId, arr);
+                            } catch (std::exception &e) {
+                                sendNoticeError(msg->connId, std::string("bad count: ") + e.what());
                             }
                         } else {
                             throw herr("unknown cmd");
@@ -129,6 +136,32 @@ void RelayServer::ingesterProcessReq(lmdb::txn &txn, uint64_t connId, const tao:
     Subscription sub(connId, jsonGetString(arr[1], "REQ subscription id was not a string"), NostrFilterGroup(arr));
 
     tpReqWorker.dispatch(connId, MsgReqWorker{MsgReqWorker::NewSub{std::move(sub)}});
+}
+
+void RelayServer::ingesterProcessCount(lmdb::txn &txn, uint64_t connId, const tao::json::value &arr) {
+    if (arr.get_array().size() < 2 + 1) throw herr("arr too small");
+    if (arr.get_array().size() > 2 + 20) throw herr("arr too big");
+
+    uint64_t maxLimit = UINT64_MAX;
+    Subscription sub(connId, arr[1].get_string(), NostrFilterGroup(arr, maxLimit));
+
+    QueryScheduler queries;
+    size_t eventCount = 0;
+
+    queries.onEvent = [&](lmdb::txn &txn, const auto &sub, uint64_t levId, std::string_view eventPayload) {
+        eventCount++;
+    };
+
+    if (!queries.addSub(txn, std::move(sub))) {
+        sendNoticeError(connId, std::string("too many concurrent REQs"));
+        return;
+    }
+
+    queries.process(txn);
+
+    tao::json::value response = {{"count", eventCount}};
+    std::string response_str = tao::json::to_string(response);
+    sendOKResponse(connId, arr[1].get_string(), true, response_str);
 }
 
 void RelayServer::ingesterProcessClose(lmdb::txn &txn, uint64_t connId, const tao::json::value &arr) {
