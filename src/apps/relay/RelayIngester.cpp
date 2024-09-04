@@ -35,6 +35,13 @@ void RelayServer::runIngester(ThreadPool<MsgIngester>::Thread &thr) {
                                                false, std::string("invalid: ") + e.what());
                                 if (cfg().relay__logging__invalidEvents) LI << "Rejected invalid event: " << e.what();
                             }
+                        } else if (cmd == "EVENTS") {
+                            try {
+                                ingesterProcessEvents(txn, msg->connId, msg->ipAddr, secpCtx, arr[1], writerMsgs);
+                            } catch (std::exception &e) {
+                                sendOKResponse(msg->connId, arr[1].at("id").get_string(), false, std::string("invalid: ") + e.what());
+                                if (cfg().relay__logging__invalidEvents) LI << "Rejected invalid EVENTS: " << e.what();
+                            }
                         } else if (cmd == "REQ") {
                             if (cfg().relay__logging__dumpInReqs) LI << "[" << msg->connId << "] dumpInReq: " << msg->payload; 
 
@@ -127,6 +134,25 @@ void RelayServer::ingesterProcessEvent(lmdb::txn &txn, uint64_t connId, std::str
     }
 
     output.emplace_back(MsgWriter{MsgWriter::AddEvent{connId, std::move(ipAddr), std::move(packedStr), std::move(jsonStr)}});
+}
+
+void RelayServer::ingesterProcessEvents(lmdb::txn &txn, uint64_t connId, std::string ipAddr, secp256k1_context *secpCtx, const tao::json::value &eventsArray, std::vector<MsgWriter> &output) {
+    if (!eventsArray.is_array()) {
+        throw herr("EVENTS payload is not an array");
+    }
+
+    for (const auto &eventJson : eventsArray.get_array()) {
+        try {
+            ingesterProcessEvent(txn, connId, ipAddr, secpCtx, eventJson, output);
+        } catch (std::exception &e) {
+            sendNoticeError(connId, std::string("EVENT processing error: ") + e.what());
+            if (cfg().relay__logging__invalidEvents) {
+                LI << "Error processing EVENT in EVENTS batch: " << e.what();
+            }
+        }
+    }
+
+    sendOKResponse(connId, "", true, "batch processed");
 }
 
 void RelayServer::ingesterProcessReq(lmdb::txn &txn, uint64_t connId, const tao::json::value &arr) {
