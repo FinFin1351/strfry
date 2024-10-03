@@ -3,7 +3,22 @@
 #include "StrfryTemplates.h"
 #include "app_git_version.h"
 
+#include <random>
+#include <string>
 
+namespace {
+    std::string generateRandomChallenge(size_t length = 32) {
+        const char charset[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+        std::default_random_engine rng(std::random_device{}());
+        std::uniform_int_distribution<> dist(0, sizeof(charset) - 2);
+        std::string challenge;
+        challenge.reserve(length);
+        for (size_t i = 0; i < length; ++i) {
+            challenge += charset[dist(rng)];
+        }
+        return challenge;
+    }
+}
 
 static std::string preGenerateHttpResponse(const std::string &contentType, const std::string &content) {
     std::string output = "HTTP/1.1 200 OK\r\n";
@@ -32,6 +47,8 @@ void RelayServer::runWebsocket(ThreadPool<MsgWebsocket>::Thread &thr) {
             uint64_t bytesDownCompressed = 0;
         } stats;
 
+        std::string challenge;
+        
         Connection(uWS::WebSocket<uWS::SERVER> *p, uint64_t connId_)
             : websocket(p), connId(connId_), connectedTimestamp(hoytech::curr_time_us()) { }
         Connection(const Connection &) = delete;
@@ -209,8 +226,8 @@ void RelayServer::runWebsocket(ThreadPool<MsgWebsocket>::Thread &thr) {
         bool compEnabled, compSlidingWindow;
         ws->getCompressionState(compEnabled, compSlidingWindow);
         LI << "[" << connId << "] Connect from " << renderIP(c->ipAddr)
-           << " compression=" << (compEnabled ? 'Y' : 'N')
-           << " sliding=" << (compSlidingWindow ? 'Y' : 'N')
+        << " compression=" << (compEnabled ? 'Y' : 'N')
+        << " sliding=" << (compSlidingWindow ? 'Y' : 'N')
         ;
 
         if (cfg().relay__enableTcpKeepalive) {
@@ -219,6 +236,16 @@ void RelayServer::runWebsocket(ThreadPool<MsgWebsocket>::Thread &thr) {
                 LW << "Failed to enable TCP keepalive: " << strerror(errno);
             }
         }
+
+        std::string challenge = generateRandomChallenge();
+
+        c->challenge = challenge;
+
+        std::string authMessage = "[\"AUTH\",\"" + challenge + "\"]";
+        ws->send(authMessage.c_str(), authMessage.length(), uWS::OpCode::TEXT);
+
+        LI << "[" << connId << "] Sent AUTH challenge: " << challenge;
+
     });
 
     hubGroup->onDisconnection([&](uWS::WebSocket<uWS::SERVER> *ws, int code, char *message, size_t length) {
