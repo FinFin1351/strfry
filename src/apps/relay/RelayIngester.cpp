@@ -1,5 +1,6 @@
 #include "RelayServer.h"
 #include "QueryScheduler.h"
+#include <climits>
 
 void RelayServer::runIngester(ThreadPool<MsgIngester>::Thread &thr) {
     secp256k1_context *secpCtx = secp256k1_context_create(SECP256K1_CONTEXT_VERIFY);
@@ -25,56 +26,85 @@ void RelayServer::runIngester(ThreadPool<MsgIngester>::Thread &thr) {
 
                         auto &cmd = jsonGetString(arr[0], "first element not a command like REQ");
 
-                        if (cmd == "EVENT") {
-                            if (cfg().relay__logging__dumpInEvents) LI << "[" << msg->connId << "] dumpInEvent: " << msg->payload; 
-
-                            try {
-                                ingesterProcessEvent(txn, msg->connId, msg->ipAddr, secpCtx, arr[1], writerMsgs);
-                            } catch (std::exception &e) {
-                                sendOKResponse(msg->connId, arr[1].is_object() && arr[1].at("id").is_string() ? arr[1].at("id").get_string() : "?",
-                                               false, std::string("invalid: ") + e.what());
-                                if (cfg().relay__logging__invalidEvents) LI << "Rejected invalid event: " << e.what();
-                            }
-                        } else if (cmd == "EVENTS") {
-                            try {
-                                ingesterProcessEvents(txn, msg->connId, msg->ipAddr, secpCtx, arr[1], writerMsgs);
-                            } catch (std::exception &e) {
-                                sendOKResponse(msg->connId, arr[1].at("id").get_string(), false, std::string("invalid: ") + e.what());
-                                if (cfg().relay__logging__invalidEvents) LI << "Rejected invalid EVENTS: " << e.what();
-                            }
-                        } else if (cmd == "REQ") {
-                            if (cfg().relay__logging__dumpInReqs) LI << "[" << msg->connId << "] dumpInReq: " << msg->payload; 
-
-                            try {
-                                ingesterProcessReq(txn, msg->connId, arr);
-                            } catch (std::exception &e) {
-                                sendNoticeError(msg->connId, std::string("bad req: ") + e.what());
-                            }
-                        } else if (cmd == "CLOSE") {
-                            if (cfg().relay__logging__dumpInReqs) LI << "[" << msg->connId << "] dumpInReq: " << msg->payload; 
-
-                            try {
-                                ingesterProcessClose(txn, msg->connId, arr);
-                            } catch (std::exception &e) {
-                                sendNoticeError(msg->connId, std::string("bad close: ") + e.what());
-                            }
-                        } else if (cmd.starts_with("NEG-")) {
-                            if (!cfg().relay__negentropy__enabled) throw herr("negentropy disabled");
-
-                            try {
-                                ingesterProcessNegentropy(txn, decomp, msg->connId, arr);
-                            } catch (std::exception &e) {
-                                sendNoticeError(msg->connId, std::string("negentropy error: ") + e.what());
-                            }
-                        }  else if (cmd == "COUNT") {
-                            if (cfg().relay__logging__dumpInReqs) LI << "[" << msg->connId << "] dumpInCount: " << msg->payload; 
-                            try {
-                                ingesterProcessCount(txn, msg->connId, arr);
-                            } catch (std::exception &e) {
-                                sendNoticeError(msg->connId, std::string("bad count: ") + e.what());
-                            }
+                        if (cmd == "AUTH") {
+                            ingesterProcessAuth(txn, msg->connId, secpCtx, arr[1]);
                         } else {
-                            throw herr("unknown cmd");
+                            auto connPtr = this->connIdToConnection.find(msg->connId);
+                            if (connPtr == this->connIdToConnection.end()) {
+                                continue;
+                            }
+                            if (!connPtr->second->isAuthenticated) {
+                                std::string subIdStr;
+                                if (cmd == "EVENT") {
+                                    if (arr[1].is_object() && arr[1].at("id").is_string()) {
+                                        subIdStr = arr[1].at("id").get_string();
+                                    }
+                                } else if (cmd == "EVENTS") {
+                                    if (arr[1].is_array() && arr[1].get_array().size() > 0 && arr[1][0].is_object() && arr[1][0].at("id").is_string()) {
+                                        subIdStr = arr[1][0].at("id").get_string();
+                                    }
+                                } else if (cmd == "REQ") {
+                                    if (arr[1].is_string()) {
+                                        subIdStr = arr[1].get_string();
+                                    }
+                                } else {
+                                    subIdStr = "1234";
+                                }
+                                SubId subId{subIdStr};
+                                sendClosedResponse(msg->connId, subId, "not authenticated");
+                                continue;
+                            }
+                            if (cmd == "EVENT") {
+                                if (cfg().relay__logging__dumpInEvents) LI << "[" << msg->connId << "] dumpInEvent: " << msg->payload; 
+
+                                try {
+                                    ingesterProcessEvent(txn, msg->connId, msg->ipAddr, secpCtx, arr[1], writerMsgs);
+                                } catch (std::exception &e) {
+                                    sendOKResponse(msg->connId, arr[1].is_object() && arr[1].at("id").is_string() ? arr[1].at("id").get_string() : "?",
+                                                false, std::string("invalid: ") + e.what());
+                                    if (cfg().relay__logging__invalidEvents) LI << "Rejected invalid event: " << e.what();
+                                }
+                            } else if (cmd == "EVENTS") {
+                                try {
+                                    ingesterProcessEvents(txn, msg->connId, msg->ipAddr, secpCtx, arr[1], writerMsgs);
+                                } catch (std::exception &e) {
+                                    sendOKResponse(msg->connId, arr[1].at("id").get_string(), false, std::string("invalid: ") + e.what());
+                                    if (cfg().relay__logging__invalidEvents) LI << "Rejected invalid EVENTS: " << e.what();
+                                }
+                            } else if (cmd == "REQ") {
+                                if (cfg().relay__logging__dumpInReqs) LI << "[" << msg->connId << "] dumpInReq: " << msg->payload; 
+
+                                try {
+                                    ingesterProcessReq(txn, msg->connId, arr);
+                                } catch (std::exception &e) {
+                                    sendNoticeError(msg->connId, std::string("bad req: ") + e.what());
+                                }
+                            } else if (cmd == "CLOSE") {
+                                if (cfg().relay__logging__dumpInReqs) LI << "[" << msg->connId << "] dumpInReq: " << msg->payload; 
+
+                                try {
+                                    ingesterProcessClose(txn, msg->connId, arr);
+                                } catch (std::exception &e) {
+                                    sendNoticeError(msg->connId, std::string("bad close: ") + e.what());
+                                }
+                            } else if (cmd.starts_with("NEG-")) {
+                                if (!cfg().relay__negentropy__enabled) throw herr("negentropy disabled");
+
+                                try {
+                                    ingesterProcessNegentropy(txn, decomp, msg->connId, arr);
+                                } catch (std::exception &e) {
+                                    sendNoticeError(msg->connId, std::string("negentropy error: ") + e.what());
+                                }
+                            }  else if (cmd == "COUNT") {
+                                if (cfg().relay__logging__dumpInReqs) LI << "[" << msg->connId << "] dumpInCount: " << msg->payload; 
+                                try {
+                                    ingesterProcessCount(txn, msg->connId, arr);
+                                } catch (std::exception &e) {
+                                    sendNoticeError(msg->connId, std::string("bad count: ") + e.what());
+                                }
+                            } else {
+                                throw herr("unknown cmd");
+                            }
                         }
                     } else if (msg->payload == "\n") {
                         // Do nothing.
@@ -99,6 +129,56 @@ void RelayServer::runIngester(ThreadPool<MsgIngester>::Thread &thr) {
     }
 }
 
+void RelayServer::ingesterProcessAuth(lmdb::txn &txn, uint64_t connId, secp256k1_context *secpCtx, const tao::json::value &authEvent) {
+    auto connPtr = this->connIdToConnection.find(connId);
+    if (connPtr == this->connIdToConnection.end()) {
+        return;
+    }
+    Connection *c = connPtr->second;
+
+    bool success = false;
+    std::string errorMsg;
+
+    try {
+        std::string packedStr, jsonStr;
+        parseAndVerifyEvent(authEvent, secpCtx, true, false, packedStr, jsonStr);
+
+        PackedEventView packed(packedStr);
+
+        if (packed.kind() != 22242) {
+            throw herr("invalid kind");
+        }
+
+        bool challengeMatched = false;
+        bool relayMatched = true;
+        // LI << "AUTH event: " << packedStr;
+        std::string challengeFromJson;
+        for (const auto &tag : authEvent.at("tags").get_array()) {
+            auto &tagArr = jsonGetArray(tag, "tag in tags field was not an array");
+            auto tagName = jsonGetString(tagArr.at(0), "tag name was not a string");
+            if (tagName == "challenge") {
+                challengeFromJson = jsonGetString(tagArr.at(1), "challenge value was not a string");
+                break;
+            }
+        }
+
+        if (challengeFromJson != c->challenge) {
+            throw herr("challenge mismatch");
+        }
+        if (!relayMatched) {
+            throw herr("relay URL mismatch");
+        }
+
+        c->isAuthenticated = true;
+        c->pubkey = packed.pubkey();
+
+        success = true;
+    } catch (std::exception &e) {
+        errorMsg = e.what();
+    }
+
+    sendOKResponse(connId, authEvent.at("id").get_string(), success, errorMsg);
+}
 void RelayServer::ingesterProcessEvent(lmdb::txn &txn, uint64_t connId, std::string ipAddr, secp256k1_context *secpCtx, const tao::json::value &origJson, std::vector<MsgWriter> &output) {
     std::string packedStr, jsonStr;
 
