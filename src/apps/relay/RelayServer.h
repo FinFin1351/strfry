@@ -147,9 +147,31 @@ struct MsgNegentropy : NonCopyable {
     MsgNegentropy(Var &&msg_) : msg(std::move(msg_)) {}
 };
 
+struct Connection {
+    uWS::WebSocket<uWS::SERVER> *websocket;
+    uint64_t connId;
+    uint64_t connectedTimestamp;
+    std::string ipAddr;
+    struct Stats {
+        uint64_t bytesUp = 0;
+        uint64_t bytesUpCompressed = 0;
+        uint64_t bytesDown = 0;
+        uint64_t bytesDownCompressed = 0;
+    } stats;
+
+    std::string pubkey;
+    std::string challenge;
+    bool isAuthenticated = false;
+
+    Connection(uWS::WebSocket<uWS::SERVER> *p, uint64_t connId_)
+        : websocket(p), connId(connId_), connectedTimestamp(hoytech::curr_time_us()) { }
+    Connection(const Connection &) = delete;
+    Connection(Connection &&) = delete;
+};
 
 struct RelayServer {
     uS::Async *hubTrigger = nullptr;
+    flat_hash_map<uint64_t, Connection*> connIdToConnection;
 
     // Thread Pools
 
@@ -167,6 +189,7 @@ struct RelayServer {
     void runWebsocket(ThreadPool<MsgWebsocket>::Thread &thr);
 
     void runIngester(ThreadPool<MsgIngester>::Thread &thr);
+    void ingesterProcessAuth(lmdb::txn &txn, uint64_t connId, secp256k1_context *secpCtx, const tao::json::value &authEvent);
     void ingesterProcessEvent(lmdb::txn &txn, uint64_t connId, std::string ipAddr, secp256k1_context *secpCtx, const tao::json::value &origJson, std::vector<MsgWriter> &output);
     void ingesterProcessEvents(lmdb::txn &txn, uint64_t connId, std::string ipAddr, secp256k1_context *secpCtx, const tao::json::value &eventsArray, std::vector<MsgWriter> &output);
     void ingesterProcessReq(lmdb::txn &txn, uint64_t connId, const tao::json::value &origJson);
@@ -227,6 +250,12 @@ struct RelayServer {
 
     void sendOKResponse(uint64_t connId, std::string_view eventIdHex, bool written, std::string_view message) {
         auto reply = tao::json::value::array({ "OK", eventIdHex, written, message });
+        tpWebsocket.dispatch(0, MsgWebsocket{MsgWebsocket::Send{connId, std::move(tao::json::to_string(reply))}});
+        hubTrigger->send();
+    }
+
+    void sendClosedResponse(uint64_t connId, const SubId &subId, std::string_view reason) {
+        auto reply = tao::json::value::array({ "CLOSED", subId.str(), reason });
         tpWebsocket.dispatch(0, MsgWebsocket{MsgWebsocket::Send{connId, std::move(tao::json::to_string(reply))}});
         hubTrigger->send();
     }

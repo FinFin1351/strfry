@@ -35,29 +35,8 @@ static std::string preGenerateHttpResponse(const std::string &contentType, const
 
 
 void RelayServer::runWebsocket(ThreadPool<MsgWebsocket>::Thread &thr) {
-    struct Connection {
-        uWS::WebSocket<uWS::SERVER> *websocket;
-        uint64_t connId;
-        uint64_t connectedTimestamp;
-        std::string ipAddr;
-        struct Stats {
-            uint64_t bytesUp = 0;
-            uint64_t bytesUpCompressed = 0;
-            uint64_t bytesDown = 0;
-            uint64_t bytesDownCompressed = 0;
-        } stats;
-
-        std::string challenge;
-        
-        Connection(uWS::WebSocket<uWS::SERVER> *p, uint64_t connId_)
-            : websocket(p), connId(connId_), connectedTimestamp(hoytech::curr_time_us()) { }
-        Connection(const Connection &) = delete;
-        Connection(Connection &&) = delete;
-    };
-
     uWS::Hub hub;
     uWS::Group<uWS::SERVER> *hubGroup = nullptr;
-    flat_hash_map<uint64_t, Connection*> connIdToConnection;
     uint64_t nextConnectionId = 1;
     bool gracefulShutdown = false;
 
@@ -221,7 +200,7 @@ void RelayServer::runWebsocket(ThreadPool<MsgWebsocket>::Thread &thr) {
         if (c->ipAddr.size() == 0) c->ipAddr = ws->getAddressBytes();
 
         ws->setUserData((void*)c);
-        connIdToConnection.emplace(connId, c);
+        this->connIdToConnection.emplace(connId, c);
 
         bool compEnabled, compSlidingWindow;
         ws->getCompressionState(compEnabled, compSlidingWindow);
@@ -263,12 +242,12 @@ void RelayServer::runWebsocket(ThreadPool<MsgWebsocket>::Thread &thr) {
 
         tpIngester.dispatch(connId, MsgIngester{MsgIngester::CloseConn{connId}});
 
-        connIdToConnection.erase(connId);
+        this->connIdToConnection.erase(connId);
         delete c;
 
         if (gracefulShutdown) {
-            LI << "Graceful shutdown in progress: " << connIdToConnection.size() << " connections remaining";
-            if (connIdToConnection.size() == 0) {
+            LI << "Graceful shutdown in progress: " << this->connIdToConnection.size() << " connections remaining";
+            if (this->connIdToConnection.size() == 0) {
                 LW << "All connections closed, shutting down";
                 ::exit(0);
             }
@@ -289,8 +268,8 @@ void RelayServer::runWebsocket(ThreadPool<MsgWebsocket>::Thread &thr) {
         auto newMsgs = thr.inbox.pop_all_no_wait();
 
         auto doSend = [&](uint64_t connId, std::string_view payload, uWS::OpCode opCode){
-            auto it = connIdToConnection.find(connId);
-            if (it == connIdToConnection.end()) return;
+            auto it = this->connIdToConnection.find(connId);
+            if (it == this->connIdToConnection.end()) return;
             auto &c = *it->second;
 
             size_t compressedSize;
@@ -320,7 +299,7 @@ void RelayServer::runWebsocket(ThreadPool<MsgWebsocket>::Thread &thr) {
                     doSend(item.connId, std::string_view(p, 13 + subIdSv.size() + msg->evJson.size()), uWS::OpCode::TEXT);
                 }
             } else if (std::get_if<MsgWebsocket::GracefulShutdown>(&newMsg.msg)) {
-                LW << "Initiating graceful shutdown: " << connIdToConnection.size() << " connections remaining";
+                LW << "Initiating graceful shutdown: " << this->connIdToConnection.size() << " connections remaining";
                 gracefulShutdown = true;
                 hubGroup->stopListening();
             }
