@@ -52,6 +52,7 @@ void RelayServer::runIngester(ThreadPool<MsgIngester>::Thread &thr) {
                                 }
                                 SubId subId{subIdStr};
                                 sendClosedResponse(msg->connId, subId, "not authenticated");
+                                connPtr->second->websocket->close();
                                 continue;
                             }
                             if (cmd == "EVENT") {
@@ -178,6 +179,9 @@ void RelayServer::ingesterProcessAuth(lmdb::txn &txn, uint64_t connId, secp256k1
     }
 
     sendOKResponse(connId, authEvent.at("id").get_string(), success, errorMsg);
+    if (!success) {
+        c->websocket->close();
+    }
 }
 void RelayServer::ingesterProcessEvent(lmdb::txn &txn, uint64_t connId, std::string ipAddr, secp256k1_context *secpCtx, const tao::json::value &origJson, std::vector<MsgWriter> &output) {
     std::string packedStr, jsonStr;
