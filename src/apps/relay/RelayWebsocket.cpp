@@ -223,8 +223,6 @@ void RelayServer::runWebsocket(ThreadPool<MsgWebsocket>::Thread &thr) {
         std::string authMessage = "[\"AUTH\",\"" + challenge + "\"]";
         ws->send(authMessage.c_str(), authMessage.length(), uWS::OpCode::TEXT);
 
-        LI << "[" << connId << "] Sent AUTH challenge: " << challenge;
-
     });
 
     hubGroup->onDisconnection([&](uWS::WebSocket<uWS::SERVER> *ws, int code, char *message, size_t length) {
