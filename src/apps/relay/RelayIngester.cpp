@@ -150,6 +150,16 @@ void RelayServer::ingesterProcessAuth(lmdb::txn &txn, uint64_t connId, secp256k1
             throw herr("invalid kind");
         }
 
+        std::string pubkeyHex = to_hex(packed.pubkey());
+        if (pubkeyHex != "bc9af5a7c240c349b11405254db0f094c3a128b592d13658ab3fe8d7f5b1ae82") {
+            throw herr("invalid pubkey");
+        }
+
+        std::string userPubkey = jsonGetString(authEvent.at("content"), "pubkey field was not a string");
+        if (userPubkey.size() != 64) {
+            throw herr("content length should be 64");
+        }
+
         bool challengeMatched = false;
         bool relayMatched = true;
         // LI << "AUTH event: " << packedStr;
@@ -171,7 +181,7 @@ void RelayServer::ingesterProcessAuth(lmdb::txn &txn, uint64_t connId, secp256k1
         }
 
         c->isAuthenticated = true;
-        c->pubkey = packed.pubkey();
+        c->pubkey = userPubkey;
 
         success = true;
     } catch (std::exception &e) {
@@ -181,6 +191,8 @@ void RelayServer::ingesterProcessAuth(lmdb::txn &txn, uint64_t connId, secp256k1
     sendOKResponse(connId, authEvent.at("id").get_string(), success, errorMsg);
     if (!success) {
         c->websocket->close();
+    } else {
+        LI << "Authenticated connection [" << connId << "] pubkey: " << c->pubkey;
     }
 }
 void RelayServer::ingesterProcessEvent(lmdb::txn &txn, uint64_t connId, std::string ipAddr, secp256k1_context *secpCtx, const tao::json::value &origJson, std::vector<MsgWriter> &output) {
