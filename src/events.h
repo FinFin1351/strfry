@@ -129,3 +129,9 @@ uint64_t deleteEvents(lmdb::txn &txn, NegentropyFilterCache &neFilterCache, cons
 
     return numDeleted;
 }
+
+std::string derivePublicKey(const std::string &privateKeyHex);
+std::string signEvent(const Bytes32 &eventId, const std::string &privateKeyHex);
+std::string serializeEvent(const tao::json::value &event);
+Bytes32 sha256(const std::string &data);
+tao::json::value constructAuthEvent(const std::string &challenge);

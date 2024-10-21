@@ -352,3 +352,126 @@ void writeEvents(lmdb::txn &txn, NegentropyFilterCache &neFilterCache, std::vect
         }
     });
 }
+
+std::vector<uint8_t> hexToBytes(const std::string &hex) {
+    if (hex.length() % 2 != 0) {
+        throw std::invalid_argument("Invalid hex string length");
+    }
+
+    std::vector<uint8_t> bytes;
+    bytes.reserve(hex.length() / 2);
+    for (size_t i = 0; i < hex.length(); i += 2) {
+        std::string byteString = hex.substr(i, 2);
+        uint8_t byte = static_cast<uint8_t>(std::stoi(byteString, nullptr, 16));
+        bytes.push_back(byte);
+    }
+    return bytes;
+}
+
+std::string derivePublicKey(const std::string &privateKeyHex) {
+    std::vector<uint8_t> privateKeyBytes = hexToBytes(privateKeyHex);
+
+    if (privateKeyBytes.size() != 32) {
+        throw std::runtime_error("Invalid private key size");
+    }
+
+    secp256k1_context *secpCtx = secp256k1_context_create(SECP256K1_CONTEXT_SIGN);
+
+    secp256k1_keypair keypair;
+    if (!secp256k1_keypair_create(secpCtx, &keypair, privateKeyBytes.data())) {
+        secp256k1_context_destroy(secpCtx);
+        throw std::runtime_error("Failed to create keypair");
+    }
+
+    // Extract the x-only public key
+    secp256k1_xonly_pubkey xonlyPubkey;
+    if (!secp256k1_keypair_xonly_pub(secpCtx, &xonlyPubkey, nullptr, &keypair)) {
+        secp256k1_context_destroy(secpCtx);
+        throw std::runtime_error("Failed to get x-only public key");
+    }
+
+    // Serialize the x-only public key
+    unsigned char pubkeyBytes[32];
+    if (!secp256k1_xonly_pubkey_serialize(secpCtx, pubkeyBytes, &xonlyPubkey)) {
+        secp256k1_context_destroy(secpCtx);
+        throw std::runtime_error("Failed to serialize public key");
+    }
+
+    secp256k1_context_destroy(secpCtx);
+
+    // Convert the public key bytes to hex
+    return hoytech::to_hex(std::string_view(reinterpret_cast<char*>(pubkeyBytes), 32));
+}
+
+std::string serializeEvent(const tao::json::value &event) {
+    tao::json::value arr = tao::json::empty_array;
+    arr.emplace_back(0);
+    arr.emplace_back(event.at("pubkey"));
+    arr.emplace_back(event.at("created_at"));
+    arr.emplace_back(event.at("kind"));
+    arr.emplace_back(event.at("tags"));
+    arr.emplace_back(event.at("content"));
+    return tao::json::to_string(arr);
+}
+
+std::string signEvent(const Bytes32 &eventId, const std::string &privateKeyHex) {
+    std::vector<uint8_t> privateKeyBytes = hexToBytes(privateKeyHex);
+
+    if (privateKeyBytes.size() != 32) {
+        throw std::runtime_error("Invalid private key size");
+    }
+
+    secp256k1_context *secpCtx = secp256k1_context_create(SECP256K1_CONTEXT_SIGN);
+
+    secp256k1_keypair keypair;
+    if (!secp256k1_keypair_create(secpCtx, &keypair, privateKeyBytes.data())) {
+        secp256k1_context_destroy(secpCtx);
+        throw std::runtime_error("Failed to create keypair");
+    }
+
+    unsigned char signature[64];
+    if (!secp256k1_schnorrsig_sign(secpCtx, signature, eventId.buf, &keypair, nullptr)) {
+        secp256k1_context_destroy(secpCtx);
+        throw std::runtime_error("Failed to sign event");
+    }
+
+    secp256k1_context_destroy(secpCtx);
+
+    return hoytech::to_hex(std::string_view(reinterpret_cast<char*>(signature), 64));
+}
+
+Bytes32 sha256(const std::string &data) {
+    unsigned char hash[SHA256_DIGEST_LENGTH];
+    SHA256(reinterpret_cast<const unsigned char*>(data.data()), data.size(), hash);
+    return Bytes32(std::string_view(reinterpret_cast<char*>(hash), SHA256_DIGEST_LENGTH));
+}
+
+tao::json::value constructAuthEvent(const std::string &challenge) {
+    // Derive the public key from the private key
+    std::string privateKeyHex = cfg().relay__auth__privateKey;
+    std::string contentPublicKeyHex = cfg().relay__auth__publicKey;
+    std::string publicKeyHex = derivePublicKey(privateKeyHex);
+
+    // Construct the AUTH event
+    tao::json::value authEvent;
+    authEvent["kind"] = 22242;
+    authEvent["created_at"] = std::time(nullptr);
+    authEvent["tags"] = tao::json::value::array({
+        tao::json::value::array({ "challenge", challenge })
+    });
+    authEvent["content"] = contentPublicKeyHex;
+    authEvent["pubkey"] = publicKeyHex;
+
+    // Serialize the event
+    std::string serializedEvent = serializeEvent(authEvent);
+
+    // Compute event ID (hash)
+    Bytes32 eventId = sha256(serializedEvent);
+    authEvent["id"] = hoytech::to_hex(eventId.sv());
+
+    // Sign the event
+    std::string signatureHex = signEvent(eventId, privateKeyHex);
+    authEvent["sig"] = signatureHex;
+
+    return authEvent;
+}

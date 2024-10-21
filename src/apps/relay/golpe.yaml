@@ -107,3 +107,11 @@ config:
   - name: relay__negentropy__maxSyncEvents
     desc: "Maximum records that sync will process before returning an error"
     default: 1000000
+  - name: relay__auth__privateKey
+    desc: "hex-encoded private key for signing auth events"
+    default: ""
+    noReload: true
+  - name: relay__auth__publicKey
+    desc: "hex-encoded public key for verifying auth events"
+    default: ""
+    noReload: true

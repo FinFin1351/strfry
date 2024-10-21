@@ -5,6 +5,7 @@
 
 #include "golpe.h"
 
+#include "events.h"
 
 class WSConnection : NonCopyable {
     std::string url;
@@ -115,13 +116,7 @@ class WSConnection : NonCopyable {
         });
 
         hubGroup->onMessage2([&](uWS::WebSocket<uWS::CLIENT> *ws, char *message, size_t length, uWS::OpCode opCode, size_t compressedSize) {
-            if (!onMessage) return;
-
-            try {
-                onMessage(std::string_view(message, length), opCode, compressedSize);
-            } catch (std::exception &e) {
-                LW << "onMessage failure: " << e.what();
-            }
+            onMessageReceived(ws, message, length, opCode, compressedSize);
         });
 
         std::function<void()> asyncCb = [&]{
@@ -155,6 +150,92 @@ class WSConnection : NonCopyable {
 
 
   private:
+
+    bool authRequired = false;  // Indicates if authentication is required
+    bool authCompleted = false; // Indicates if authentication is completed
+    std::mutex authMutex;       // Mutex for thread safety
+    std::condition_variable authCondVar; // Condition variable for authentication state
+
+    // Internal message handler
+    void onMessageReceived(uWS::WebSocket<uWS::CLIENT> *ws, char *message, size_t length, uWS::OpCode opCode, size_t compressedSize) {
+        std::string_view msg(message, length);
+        auto origJson = tao::json::from_string(msg);
+
+        if (origJson.is_array()) {
+            auto &msgArray = origJson.get_array();
+            if (!msgArray.empty()) {
+                auto &msgTypeValue = msgArray[0];
+                if (msgTypeValue.is_string()) {
+                    std::string msgType = msgTypeValue.get_string();
+                    if (msgType == "AUTH") {
+                        // AUTH message received, start authentication
+                        authRequired = true;
+                        if (msgArray.size() >= 2 && msgArray[1].is_string()) {
+                            std::string challenge = msgArray[1].get_string();
+                            performAuthentication(challenge);
+                        }
+                        return; // AUTH message handled, no need to pass to onMessage
+                    } else if (msgType == "OK" && authRequired && !authCompleted) {
+                        // Handle OK message related to AUTH
+                        if (msgArray.size() >= 4) {
+                            std::string eventId = msgArray[1].get_string();
+                            bool success = msgArray[2].get_boolean();
+                            std::string message = msgArray[3].get_string();
+
+                            {
+                                std::lock_guard<std::mutex> lock(authMutex);
+                                authCompleted = true;
+                            }
+                            authCondVar.notify_one();
+
+                            if (success) {
+                                LI << "Authentication succeeded: " << message;
+                            } else {
+                                LW << "Authentication failed: " << message;
+                                // Optionally close the connection or take other action
+                                close();
+                            }
+                        }
+                        return; // OK message handled, no need to pass to onMessage
+                    }
+                }
+            }
+        }
+
+        // If authentication is completed or not required, forward the message to onMessage
+        {
+            std::lock_guard<std::mutex> lock(authMutex);
+            if (!authRequired || authCompleted) {
+                // Authentication is complete or not required, forward message to user-defined onMessage
+                if (onMessage) {
+                    try {
+                        onMessage(msg, opCode, compressedSize);
+                    } catch (std::exception &e) {
+                        LW << "onMessage exception: " << e.what();
+                    }
+                }
+            }
+        }
+    }
+
+    void performAuthentication(const std::string &challenge) {
+        try {
+
+            // Construct the AUTH event using the function from events.h
+            tao::json::value authEvent = constructAuthEvent(challenge);
+
+            // Create the AUTH message
+            tao::json::value authMsg = tao::json::value::array({ "AUTH", authEvent });
+
+            // Send the AUTH message over WebSocket
+            send(tao::json::to_string(authMsg));
+
+        } catch (const std::exception &e) {
+            LW << "Failed to perform authentication: " << e.what();
+            // Handle the failure (e.g., close the connection if necessary)
+            close();
+        }
+    }
 
     void terminate() {
         if (hubGroup) {

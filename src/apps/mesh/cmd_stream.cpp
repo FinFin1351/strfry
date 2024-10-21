@@ -41,8 +41,12 @@ void cmd_stream(const std::vector<std::string> &subArgs) {
 
     ws.onConnect = [&]{
         if (dir == "down" || dir == "both") {
+            std::thread([&]() {
+            std::this_thread::sleep_for(std::chrono::seconds(3));
+
             auto encoded = tao::json::to_string(tao::json::value::array({ "REQ", "sub", tao::json::value({ { "limit", 0 } }) }));
             ws.send(encoded);
+        }).detach();
         }
     };
 
