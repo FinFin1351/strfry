@@ -36,12 +36,13 @@ jobs:
           fi
 
       - name: Package Debian (.deb)
+        id: package
         run: |
           sudo apt-get install debhelper devscripts -y
           dpkg-buildpackage --build=binary -us -uc
           mv ../*.deb .
           filename=$(ls *.deb | grep -v -- -dbgsym)
-          echo "filename=${filename}" >> $GITHUB_OUTPUT
+          echo "filename=${filename}" >> $GITHUB_OUTPUT  # 使用 GITHUB_OUTPUT 设置输出变量
 
       - name: Upload strfry deb to GitHub Release
         uses: ncipollo/release-action@v1
