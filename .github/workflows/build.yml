@@ -1,22 +1,24 @@
-name: ubuntu
+name: build
 
-on: [push, pull_request]
+on:
+  push:
+    branches:
+      - master
 
 jobs:
-  ubuntu:
+  build:
     runs-on: ubuntu-latest
-    name: A job to build and run strfry on Ubuntu
     steps:
-      - name: Checkout strfry
-        uses: actions/checkout@v4
+      - name: Checkout Code
+        uses: actions/checkout@v2
         with:
           fetch-depth: 0
 
       - name: Build strfry
         run: |
-          sudo apt update && sudo apt install -y --no-install-recommends \
-          git g++ make pkg-config libtool ca-certificates \
-          libssl-dev zlib1g-dev liblmdb-dev libflatbuffers-dev libsecp256k1-dev libzstd-dev
+          sudo apt update && sudo apt install -y git g++ make pkg-config libtool \
+          libssl-dev zlib1g-dev liblmdb-dev libflatbuffers-dev \
+          libsecp256k1-dev libzstd-dev
           git submodule update --init
           make setup-golpe
           make -j4
@@ -25,7 +27,7 @@ jobs:
              exit 1
           fi
 
-      - name: Package strfry
+      - name: Package Debian (.deb)
         run: |
           sudo apt-get install debhelper devscripts -y
           dpkg-buildpackage --build=binary -us -uc
@@ -38,9 +40,3 @@ jobs:
         with:
           name: ${{ env.filename }}
           path: ${{ env.filename }}
-
-      - name: Run strfry
-        run: |
-          cat /etc/os-release
-          sudo ./strfry relay &
-
