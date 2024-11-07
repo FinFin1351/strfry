@@ -11,6 +11,9 @@ on:
         required: false
         default: 'false'
 
+permissions:
+  contents: write
+
 jobs:
   build:
     if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.skip_build != 'true') }}
