@@ -79,7 +79,7 @@ jobs:
           username: ${{ secrets.AWS_SERVER_USER }}
           key: ${{ secrets.AWS_SERVER_SSH_KEY }}
           source: ./strfry.deb
-          target: "/tmp/strfry.deb"
+          target: /tmp
 
       - name: Install and Start on AWS Server
         uses: appleboy/ssh-action@v0.1.5
@@ -98,7 +98,7 @@ jobs:
           username: ${{ secrets.ALI_SERVER_USER }}
           key: ${{ secrets.ALI_SERVER_SSH_KEY }}
           source: ./strfry.deb
-          target: "/tmp/strfry.deb"
+          target: /tmp
 
       - name: Install and Start on Ali Server
         uses: appleboy/ssh-action@v0.1.5
