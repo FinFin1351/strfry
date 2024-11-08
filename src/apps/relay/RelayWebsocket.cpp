@@ -8,7 +8,7 @@
 #include <string>
 
 bool isDockerInternalIP(const std::string &ipAddr) {
-    std::regex dockerIPRegex("^172\\.(1[6-9]|2[0-9]|3[0-1])\\.(\\d{1,3})\\.(\\d{1,3})$");
+    std::regex dockerIPRegex("^172\\.(22)\\.(\\d{1,3})\\.(\\d{1,3})$");
     return std::regex_match(ipAddr, dockerIPRegex);
 }
 namespace {
