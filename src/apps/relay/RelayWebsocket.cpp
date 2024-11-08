@@ -219,7 +219,9 @@ void RelayServer::runWebsocket(ThreadPool<MsgWebsocket>::Thread &thr) {
         << " sliding=" << (compSlidingWindow ? 'Y' : 'N')
         ;
 
-        if (isDockerInternalIP(c->ipAddr)) {
+        std::string ipAddressString = renderIP(c->ipAddr);
+
+        if (isDockerInternalIP(ipAddressString)) {
             c->isAuthenticated = true;
             LI << "Connection [" << connId << "] from Docker internal network - authenticated by default.";
         } else {
