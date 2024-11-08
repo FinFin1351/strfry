@@ -4,8 +4,13 @@
 #include "app_git_version.h"
 
 #include <random>
+#include <regex>
 #include <string>
 
+bool isDockerInternalIP(const std::string &ipAddr) {
+    std::regex dockerIPRegex("^172\\.22\\.(\\d{1,3})\\.(\\d{1,3})$");
+    return std::regex_match(ipAddr, dockerIPRegex);
+}
 namespace {
     std::string generateRandomChallenge(size_t length = 32) {
         const char charset[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
@@ -214,20 +219,23 @@ void RelayServer::runWebsocket(ThreadPool<MsgWebsocket>::Thread &thr) {
         << " sliding=" << (compSlidingWindow ? 'Y' : 'N')
         ;
 
+        if (isDockerInternalIP(c->ipAddr)) {
+            c->isAuthenticated = true;
+            LI << "Connection [" << connId << "] from Docker internal network - authenticated by default.";
+        } else {
+            std::string challenge = generateRandomChallenge();
+            c->challenge = challenge;
+
+            std::string authMessage = "[\"AUTH\",\"" + challenge + "\"]";
+            ws->send(authMessage.c_str(), authMessage.length(), uWS::OpCode::TEXT);
+        }
+
         if (cfg().relay__enableTcpKeepalive) {
             int optval = 1;
             if (setsockopt(ws->getFd(), SOL_SOCKET, SO_KEEPALIVE, &optval, sizeof(optval))) {
                 LW << "Failed to enable TCP keepalive: " << strerror(errno);
             }
         }
-
-        std::string challenge = generateRandomChallenge();
-
-        c->challenge = challenge;
-
-        std::string authMessage = "[\"AUTH\",\"" + challenge + "\"]";
-        ws->send(authMessage.c_str(), authMessage.length(), uWS::OpCode::TEXT);
-
     });
 
     hubGroup->onDisconnection([&](uWS::WebSocket<uWS::SERVER> *ws, int code, char *message, size_t length) {
