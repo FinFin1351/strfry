@@ -63,13 +63,15 @@ jobs:
       - name: Determine Environment
         id: environment
         run: |
-          if [ "${{ github.ref }}" == "refs/heads/master" ]; then
-            echo "environment=production" >> $GITHUB_ENV
-          elif [ "${{ github.ref }}" == "refs/heads/stage" ]; then
-            echo "environment=stage" >> $GITHUB_ENV
+          echo "GitHub reference: ${{ github.ref }}"
+          if [ "${{ github.ref_name }}" == "master" ]; then
+              echo "environment=production" >> $GITHUB_ENV
+          elif [ "${{ github.ref_name }}" == "stage" ]; then
+              echo "environment=stage" >> $GITHUB_ENV
           else
-            echo "Unknown branch: ${{ github.ref }}"
-            exit 1
+              echo "Unknown branch: ${{ github.ref_name }}"
+              exit 1
+          fi
 
       - name: Download strfry deb from GitHub Release
         run: |
