@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - master
+      - stage
   workflow_dispatch:
     inputs:
       skip_build:
@@ -48,10 +49,10 @@ jobs:
         uses: ncipollo/release-action@v1
         with:
           artifacts: ${{ steps.package.outputs.filename }}
-          tag: 'latest'
-          name: 'Latest Build'
+          tag: ${{ github.ref == 'refs/heads/master' && 'latest' || 'stage-latest' }}  # master 对应正式版本，stage 对应测试版本
+          name: ${{ github.ref == 'refs/heads/master' && 'Production Build' || 'Stage Build' }}
           draft: false
-          prerelease: false
+          prerelease: ${{ github.ref == 'refs/heads/master' && 'false' || 'true' }}
           allowUpdates: true
           token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -59,9 +60,20 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - name: Determine Environment
+        id: environment
+        run: |
+          if [ "${{ github.ref }}" == "refs/heads/master" ]; then
+            echo "environment=production" >> $GITHUB_ENV
+          elif [ "${{ github.ref }}" == "refs/heads/stage" ]; then
+            echo "environment=stage" >> $GITHUB_ENV
+          else
+            echo "Unknown branch: ${{ github.ref }}"
+            exit 1
+
       - name: Download strfry deb from GitHub Release
         run: |
-          GITHUB_API_URL="https://api.github.com/repos/${{ github.repository }}/releases/tags/latest"
+          GITHUB_API_URL="https://api.github.com/repos/${{ github.repository }}/releases/tags/${{ env.environment }}-latest"
           AUTH_HEADER="Authorization: token ${{ secrets.GITHUB_TOKEN }}"
           ASSET_ID=$(curl -s -H "$AUTH_HEADER" $GITHUB_API_URL | jq -r '.assets[] | select(.name | test("\\.deb$")) | .id')
           if [ -z "$ASSET_ID" ]; then
@@ -72,7 +84,8 @@ jobs:
             "https://api.github.com/repos/${{ github.repository }}/releases/assets/$ASSET_ID" \
             -o strfry.deb
 
-      - name: Deploy to AWS Server
+      - name: Deploy to AWS Server (Production)
+        if: env.environment == 'production'
         uses: appleboy/scp-action@v0.1.3
         with:
           host: ${{ secrets.AWS_SERVER_IP }}
@@ -81,7 +94,8 @@ jobs:
           source: ./strfry.deb
           target: /tmp
 
-      - name: Install and Start on AWS Server
+      - name: Install and Start on AWS Server (Production)
+        if: env.environment == 'production'
         uses: appleboy/ssh-action@v0.1.5
         with:
           host: ${{ secrets.AWS_SERVER_IP }}
@@ -92,6 +106,7 @@ jobs:
             sudo systemctl restart strfry
 
       - name: Deploy to Ali Server
+        if: env.environment == 'production'
         uses: appleboy/scp-action@v0.1.3
         with:
           host: ${{ secrets.ALI_SERVER_IP }}
@@ -101,11 +116,33 @@ jobs:
           target: /tmp
 
       - name: Install and Start on Ali Server
+        if: env.environment == 'production'
         uses: appleboy/ssh-action@v0.1.5
         with:
           host: ${{ secrets.ALI_SERVER_IP }}
           username: ${{ secrets.ALI_SERVER_USER }}
           key: ${{ secrets.ALI_SERVER_SSH_KEY }}
+          script: |
+            sudo dpkg -i /tmp/strfry.deb
+            sudo systemctl restart strfry
+
+      - name: Deploy to AWS Server (Stage)
+        if: env.environment == 'stage'
+        uses: appleboy/scp-action@v0.1.3
+        with:
+          host: ${{ secrets.AWS_STAGE_SERVER_IP }}
+          username: ${{ secrets.AWS_SERVER_USER }}
+          key: ${{ secrets.AWS_SERVER_SSH_KEY }}
+          source: ./strfry.deb
+          target: /tmp
+
+      - name: Install and Start on AWS Server (Stage)
+        if: env.environment == 'stage'
+        uses: appleboy/ssh-action@v0.1.5
+        with:
+          host: ${{ secrets.AWS_STAGE_SERVER_IP }}
+          username: ${{ secrets.AWS_SERVER_USER }}
+          key: ${{ secrets.AWS_SERVER_SSH_KEY }}
           script: |
             sudo dpkg -i /tmp/strfry.deb
             sudo systemctl restart strfry
