@@ -211,6 +211,27 @@ struct RelayServer {
 
     // Utils (can be called by any thread)
 
+    void closeConnection(uint64_t connId) {
+        auto connPtr = this->connIdToConnection.find(connId);
+        if (connPtr != this->connIdToConnection.end()) {
+            Connection *c = connPtr->second;
+
+            try {
+                // Log the closure
+                LI << "Closing connection [" << connId << "]";
+
+                // Close the websocket
+                c->websocket->close();
+
+                // Remove from map and delete the connection object
+                this->connIdToConnection.erase(connId);
+                delete c;
+            } catch (const std::exception &e) {
+                LW << "Exception during connection close: " << e.what();
+            }
+        }
+    }
+
     void sendToConn(uint64_t connId, std::string &&payload) {
         tpWebsocket.dispatch(0, MsgWebsocket{MsgWebsocket::Send{connId, std::move(payload)}});
         hubTrigger->send();

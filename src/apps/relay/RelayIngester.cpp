@@ -52,7 +52,7 @@ void RelayServer::runIngester(ThreadPool<MsgIngester>::Thread &thr) {
                                 }
                                 SubId subId{subIdStr};
                                 sendClosedResponse(msg->connId, subId, "not authenticated");
-                                connPtr->second->websocket->close();
+                                closeConnection(msg->connId);
                                 continue;
                             }
                             if (cmd == "EVENT") {
@@ -190,7 +190,7 @@ void RelayServer::ingesterProcessAuth(lmdb::txn &txn, uint64_t connId, secp256k1
 
     sendOKResponse(connId, authEvent.at("id").get_string(), success, errorMsg);
     if (!success) {
-        c->websocket->close();
+        closeConnection(connId);
     } else {
         LI << "Authenticated connection [" << connId << "] pubkey: " << c->pubkey;
     }
