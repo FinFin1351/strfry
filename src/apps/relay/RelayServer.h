@@ -213,29 +213,22 @@ struct RelayServer {
     // Utils (can be called by any thread)
 
     void closeConnection(uint64_t connId) {
-        std::lock_guard<std::mutex> lock(connMutex); // Lock the mutex
+        std::lock_guard<std::mutex> lock(connMutex); // 加锁保护
 
         auto connPtr = this->connIdToConnection.find(connId);
         if (connPtr != this->connIdToConnection.end()) {
             Connection *c = connPtr->second;
 
             if (c->isClosed) {
-                return; // Already closed, do nothing
+                return; // 避免重复关闭
             }
-            c->isClosed = true; // Mark as closed
 
+            c->isClosed = true; // 标记为已关闭
             try {
-                // Log the closure
-                LI << "Closing connection [" << connId << "]";
-
-                // Close the websocket
-                c->websocket->close();
-
-                // Remove from map and delete the connection object
-                this->connIdToConnection.erase(connId);
-                delete c;
+                LI << "Closing WebSocket for connection [" << connId << "]";
+                c->websocket->close(); // 仅关闭 WebSocket，留给 onDisconnection 删除对象
             } catch (const std::exception &e) {
-                LW << "Exception during connection close: " << e.what();
+                LW << "Exception during WebSocket close: " << e.what();
             }
         }
     }
