@@ -162,6 +162,7 @@ struct Connection {
     std::string pubkey;
     std::string challenge;
     bool isAuthenticated = false;
+    bool isClosed = false;
 
     Connection(uWS::WebSocket<uWS::SERVER> *p, uint64_t connId_)
         : websocket(p), connId(connId_), connectedTimestamp(hoytech::curr_time_us()) { }
@@ -211,6 +212,27 @@ struct RelayServer {
 
     // Utils (can be called by any thread)
 
+    void closeConnection(uint64_t connId) {
+        std::lock_guard<std::mutex> lock(connMutex); // 加锁保护
+
+        auto connPtr = this->connIdToConnection.find(connId);
+        if (connPtr != this->connIdToConnection.end()) {
+            Connection *c = connPtr->second;
+
+            if (c->isClosed) {
+                return; // 避免重复关闭
+            }
+
+            c->isClosed = true; // 标记为已关闭
+            try {
+                LI << "Closing WebSocket for connection [" << connId << "]";
+                c->websocket->close(); // 仅关闭 WebSocket，留给 onDisconnection 删除对象
+            } catch (const std::exception &e) {
+                LW << "Exception during WebSocket close: " << e.what();
+            }
+        }
+    }
+
     void sendToConn(uint64_t connId, std::string &&payload) {
         tpWebsocket.dispatch(0, MsgWebsocket{MsgWebsocket::Send{connId, std::move(payload)}});
         hubTrigger->send();
@@ -259,4 +281,6 @@ struct RelayServer {
         tpWebsocket.dispatch(0, MsgWebsocket{MsgWebsocket::Send{connId, std::move(tao::json::to_string(reply))}});
         hubTrigger->send();
     }
+private:
+    std::mutex connMutex;
 };
