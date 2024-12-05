@@ -162,6 +162,7 @@ struct Connection {
     std::string pubkey;
     std::string challenge;
     bool isAuthenticated = false;
+    bool isClosed = false;
 
     Connection(uWS::WebSocket<uWS::SERVER> *p, uint64_t connId_)
         : websocket(p), connId(connId_), connectedTimestamp(hoytech::curr_time_us()) { }
@@ -212,9 +213,16 @@ struct RelayServer {
     // Utils (can be called by any thread)
 
     void closeConnection(uint64_t connId) {
+        std::lock_guard<std::mutex> lock(connMutex); // Lock the mutex
+
         auto connPtr = this->connIdToConnection.find(connId);
         if (connPtr != this->connIdToConnection.end()) {
             Connection *c = connPtr->second;
+
+            if (c->isClosed) {
+                return; // Already closed, do nothing
+            }
+            c->isClosed = true; // Mark as closed
 
             try {
                 // Log the closure
@@ -280,4 +288,6 @@ struct RelayServer {
         tpWebsocket.dispatch(0, MsgWebsocket{MsgWebsocket::Send{connId, std::move(tao::json::to_string(reply))}});
         hubTrigger->send();
     }
+private:
+    std::mutex connMutex;
 };
